@@ -32,8 +32,14 @@ class PointerService : AccessibilityService() {
     override fun onServiceConnected() {
         PointerState.load(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val b = wm.currentWindowMetrics.bounds
-        sw = b.width(); sh = b.height()
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val b = wm.currentWindowMetrics.bounds
+            sw = b.width(); sh = b.height()
+        } else {
+            val dm = android.util.DisplayMetrics()
+            @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm)
+            sw = dm.widthPixels; sh = dm.heightPixels
+        }
         fx = PointerState.config.value.stopX
         fy = PointerState.config.value.stopY
         addCursor()
