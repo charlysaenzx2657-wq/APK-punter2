@@ -4,40 +4,40 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** Todo en fracciones de pantalla (0f..1f) para que funcione en cualquier teléfono. */
-data class Config(
-    val stopX: Float = 0.5f, val stopY: Float = 0.35f,      // punto donde se detiene el puntero
-    val left: Float = 0.05f, val top: Float = 0.05f,         // límite: el puntero no sale de este rectángulo
-    val right: Float = 0.95f, val bottom: Float = 0.60f
-)
+/** Posición de la línea de límite como fracción de la altura (0..1). -1 = sin límite. Una por orientación. */
+data class Config(val portrait: Float = -1f, val land: Float = -1f)
 
 object PointerState {
     private val _config = MutableStateFlow(Config())
     val config = _config.asStateFlow()
-    private val _pos = MutableStateFlow(0.5f to 0.35f)
-    val pos = _pos.asStateFlow()
+    private val _enabled = MutableStateFlow(true)
+    val enabled = _enabled.asStateFlow()
+    private val _touch = MutableStateFlow<Pair<Float, Float>?>(null)
+    val touch = _touch.asStateFlow()
     val running = MutableStateFlow(false)
+    var onEnabledChanged: (() -> Unit)? = null
+
+    private fun prefs(c: Context) = c.getSharedPreferences("cfg3", Context.MODE_PRIVATE)
 
     fun load(c: Context) {
-        val p = c.getSharedPreferences("cfg", Context.MODE_PRIVATE)
-        val d = Config()
-        _config.value = Config(
-            p.getFloat("sx", d.stopX), p.getFloat("sy", d.stopY),
-            p.getFloat("l", d.left), p.getFloat("t", d.top),
-            p.getFloat("r", d.right), p.getFloat("b", d.bottom)
-        )
+        val p = prefs(c)
+        _config.value = Config(p.getFloat("p", -1f), p.getFloat("h", -1f))
+        _enabled.value = p.getBoolean("on", true)
     }
 
     fun update(c: Context, n: Config) {
-        val cfg = n.copy(stopX = n.stopX.coerceIn(n.left, n.right), stopY = n.stopY.coerceIn(n.top, n.bottom))
-        _config.value = cfg
-        c.getSharedPreferences("cfg", Context.MODE_PRIVATE).edit()
-            .putFloat("sx", cfg.stopX).putFloat("sy", cfg.stopY)
-            .putFloat("l", cfg.left).putFloat("t", cfg.top)
-            .putFloat("r", cfg.right).putFloat("b", cfg.bottom).apply()
+        _config.value = n
+        prefs(c).edit().putFloat("p", n.portrait).putFloat("h", n.land).apply()
     }
 
     fun reset(c: Context) = update(c, Config())
 
-    fun setPos(x: Float, y: Float) { _pos.value = x to y }
+    fun setEnabled(c: Context, e: Boolean) {
+        _enabled.value = e
+        prefs(c).edit().putBoolean("on", e).apply()
+        onEnabledChanged?.invoke()
+    }
+
+    fun setTouch(x: Float, y: Float) { _touch.value = x to y }
+    fun clearTouch() { _touch.value = null }
 }
