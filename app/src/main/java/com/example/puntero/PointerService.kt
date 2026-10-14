@@ -31,6 +31,7 @@ class PointerService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var wm: WindowManager
     private var dot: View? = null
+    private var lineView: View? = null
     private var sw = 1
     private var sh = 1
     private var rotation = 0
@@ -83,6 +84,7 @@ class PointerService : AccessibilityService() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         measure()
         addDot()
+        addLine()
         PointerState.onChanged = { push() }
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addRequestPermissionResultListener(permListener)
@@ -150,6 +152,31 @@ class PointerService : AccessibilityService() {
         dot = v
     }
 
+    private val lineH by lazy { (3 * density).toInt().coerceAtLeast(2) }
+
+    private fun addLine() {
+        val v = View(this).apply {
+            setBackgroundColor(Color.parseColor("#E636D6C3"))
+            visibility = View.GONE
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, lineH, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        wm.addView(v, lp)
+        lineView = v
+    }
+
+    private fun showLine(y: Float) {
+        val v = lineView ?: return
+        val lp = v.layoutParams as? WindowManager.LayoutParams ?: return
+        lp.y = (y - lineH / 2f).toInt()
+        v.visibility = View.VISIBLE
+        wm.updateViewLayout(v, lp)
+    }
+
     private fun showDot(x: Float, y: Float) {
         val v = dot ?: return
         val lp = v.layoutParams as? WindowManager.LayoutParams ?: return
@@ -158,15 +185,18 @@ class PointerService : AccessibilityService() {
         v.visibility = View.VISIBLE
         wm.updateViewLayout(v, lp)
         dotShown = true; dotX = x; dotY = y
+        showLine(y)
     }
 
     private fun hideDot() {
         dot?.visibility = View.GONE
+        lineView?.visibility = View.GONE
         dotShown = false
     }
 
     /** Doble toque: fija el límite a esa altura y muestra el puntito donde tocaste. */
     private fun handleDoubleTap(x: Float, y: Float) {
+        if (PointerState.locked.value) return // doble toque bloqueado
         val f = (y / sh).coerceIn(0.02f, 0.98f)
         val c = PointerState.config.value
         PointerState.update(this, if (sh >= sw) c.copy(portrait = f) else c.copy(land = f))
@@ -191,7 +221,8 @@ class PointerService : AccessibilityService() {
         runCatching { args?.let { Shizuku.unbindUserService(it, conn, true) } }
         engine = null; binding = false
         runCatching { dot?.let { wm.removeView(it) } }
-        dot = null
+        runCatching { lineView?.let { wm.removeView(it) } }
+        dot = null; lineView = null
         PointerState.onChanged = null
         PointerState.clearTouch()
         PointerState.running.value = false
