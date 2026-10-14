@@ -75,11 +75,13 @@ fun Screen() {
     val enabled by PointerState.enabled.collectAsState()
     val shz by PointerState.shizuku.collectAsState()
     val status by PointerState.status.collectAsState()
+    val locked by PointerState.locked.collectAsState()
     val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val open = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
     val change: (Config) -> Unit = { PointerState.update(ctx, it) }
     val reset = { PointerState.reset(ctx) }
     val toggle: (Boolean) -> Unit = { PointerState.setEnabled(ctx, it) }
+    val lockToggle: (Boolean) -> Unit = { PointerState.setLocked(ctx, it) }
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(ColBg1, ColBg0)))) {
         Column(
@@ -95,6 +97,7 @@ fun Screen() {
                         if (!on) ActivateButton(open)
                         ShizukuCard(shz, status)
                         PowerCard(enabled, toggle)
+                        LockCard(locked, lockToggle)
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                         HowTo()
@@ -106,6 +109,7 @@ fun Screen() {
                 if (!on) ActivateButton(open)
                 ShizukuCard(shz, status)
                 PowerCard(enabled, toggle)
+                LockCard(locked, lockToggle)
                 HowTo()
                 Limits(cfg, change, reset)
             }
@@ -315,6 +319,26 @@ fun ShizukuCard(state: Int, status: String) {
         if (status.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text("Diagnóstico: $status", color = ColLo, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+fun LockCard(locked: Boolean, onToggle: (Boolean) -> Unit) {
+    GlassCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Bloquear doble toque", color = ColHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (locked) "Bloqueado: el doble toque no cambia el límite"
+                    else "Libre: el doble toque fija un límite nuevo",
+                    color = ColLo, fontSize = 13.sp
+                )
+            }
+            Switch(
+                checked = locked, onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(checkedTrackColor = ColAccent)
+            )
         }
     }
 }
