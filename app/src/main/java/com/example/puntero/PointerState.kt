@@ -14,6 +14,9 @@ object PointerState {
     val config = _config.asStateFlow()
     private val _enabled = MutableStateFlow(true)
     val enabled = _enabled.asStateFlow()
+    private val _locked = MutableStateFlow(false)
+    /** true = el doble toque no fija límites nuevos. */
+    val locked = _locked.asStateFlow()
     private val _touch = MutableStateFlow<Pair<Float, Float>?>(null)
     val touch = _touch.asStateFlow()
     val running = MutableStateFlow(false)
@@ -31,6 +34,7 @@ object PointerState {
         val p = prefs(c)
         _config.value = Config(p.getFloat("p", -1f), p.getFloat("h", -1f))
         _enabled.value = p.getBoolean("on", true)
+        _locked.value = p.getBoolean("lock", false)
     }
 
     fun update(c: Context, n: Config) {
@@ -45,6 +49,11 @@ object PointerState {
         _enabled.value = e
         prefs(c).edit().putBoolean("on", e).apply()
         onChanged?.invoke()
+    }
+
+    fun setLocked(c: Context, l: Boolean) {
+        _locked.value = l
+        prefs(c).edit().putBoolean("lock", l).apply()
     }
 
     fun setTouch(x: Float, y: Float) { _touch.value = x to y }
