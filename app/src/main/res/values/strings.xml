@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Puntero</string>
-    <string name="service_desc">Muestra un puntero virtual y un touchpad en pantalla. Al soltar tras deslizar, el puntero se detiene en la posición configurada y puede tocar en esa posición.</string>
+    <string name="service_desc">Frena tus deslizamientos en una línea horizontal de límite que tú defines con doble toque. Los toques simples no cambian.</string>
 </resources>
