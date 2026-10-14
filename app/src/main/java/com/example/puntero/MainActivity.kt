@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import rikka.shizuku.Shizuku
 
 private val ColBg0 = Color(0xFF0B0C10)
 private val ColBg1 = Color(0xFF16122A)
@@ -49,11 +50,19 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(AColor.TRANSPARENT)
         )
         PointerState.load(this)
+        Shizuku.addBinderReceivedListenerSticky { PointerState.refreshShizuku() }
+        Shizuku.addBinderDeadListener { PointerState.refreshShizuku() }
+        Shizuku.addRequestPermissionResultListener { _, _ -> PointerState.refreshShizuku() }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = ColAccent, background = ColBg0, surface = ColPanel)) {
                 Screen()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PointerState.refreshShizuku()
     }
 }
 
@@ -64,6 +73,8 @@ fun Screen() {
     val touch by PointerState.touch.collectAsState()
     val on by PointerState.running.collectAsState()
     val enabled by PointerState.enabled.collectAsState()
+    val shz by PointerState.shizuku.collectAsState()
+    val status by PointerState.status.collectAsState()
     val land = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val open = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
     val change: (Config) -> Unit = { PointerState.update(ctx, it) }
@@ -82,6 +93,7 @@ fun Screen() {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                         Preview(cfg, touch, true)
                         if (!on) ActivateButton(open)
+                        ShizukuCard(shz, status)
                         PowerCard(enabled, toggle)
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -92,6 +104,7 @@ fun Screen() {
             } else {
                 Preview(cfg, touch, false)
                 if (!on) ActivateButton(open)
+                ShizukuCard(shz, status)
                 PowerCard(enabled, toggle)
                 HowTo()
                 Limits(cfg, change, reset)
@@ -219,10 +232,10 @@ fun HowTo() {
     GlassCard {
         Text("Cómo se usa", color = ColHi, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
-        Step("1", "Usa el teléfono normal. Cuando tu dedo llega a la línea al deslizar, se detiene ahí aunque sigas moviéndolo.")
+        Step("1", "Usa el teléfono normal: tus deslizamientos pasan directo a las apps, sin retraso. Cuando tu dedo llega a la línea, el toque se corta ahí.")
         Step("2", "Doble toque en cualquier lugar de cualquier app fija un nuevo límite a esa altura. Aparece un puntito donde tocaste.")
         Step("3", "Toca fuera del puntito y desaparece, dejando la pantalla libre. El límite sigue activo.")
-        Step("4", "Los toques simples no tienen límite.")
+        Step("4", "Los toques simples no tienen límite. Un doble toque también lo recibe la app que tengas abierta.")
     }
 }
 
@@ -275,5 +288,33 @@ fun LimitRow(label: String, v: Float, onChange: (Float) -> Unit) {
                 inactiveTrackColor = ColLine
             )
         )
+    }
+}
+
+@Composable
+fun ShizukuCard(state: Int, status: String) {
+    GlassCard {
+        Text("Motor (Shizuku)", color = ColHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            when (state) {
+                0 -> "Shizuku no está activo. Ábrelo y toca Iniciar."
+                1 -> "Shizuku está activo, falta darle permiso a esta app."
+                else -> "Shizuku listo."
+            },
+            color = ColLo, fontSize = 13.sp
+        )
+        if (state == 1) {
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { Shizuku.requestPermission(100) },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ColAccent)
+            ) { Text("Dar permiso a Shizuku", fontWeight = FontWeight.SemiBold) }
+        }
+        if (status.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("Diagnóstico: $status", color = ColLo, fontSize = 12.sp)
+        }
     }
 }
