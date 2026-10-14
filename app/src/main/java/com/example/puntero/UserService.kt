@@ -18,6 +18,7 @@ import kotlin.math.min
  * Corre con permisos de shell (lo inicia Shizuku). No toca tus toques: los lee en bruto de la pantalla táctil.
  * - Deslizar: pasa directo a las apps, sin retraso. Si tu dedo llega a la línea de límite, se corta el toque ahí.
  * - Doble toque: avisa a la app para fijar un nuevo límite a esa altura.
+ * Manda un diagnóstico con números reales para ver en qué paso falla algo.
  */
 class UserService : IUserService.Stub() {
 
@@ -31,8 +32,8 @@ class UserService : IUserService.Stub() {
         private const val ABS_MT_TRACKING_ID = 0x39
         private const val SLOP = 24f
         private const val LONG_PRESS = 500L
-        private const val DOUBLE_MS = 300L
-        private const val DOUBLE_SLOP = 120f
+        private const val DOUBLE_GAP = 400L   // del primer toque (al soltar) al segundo (al tocar)
+        private const val DOUBLE_SLOP = 150f
     }
 
     @Volatile private var cb: ICallback? = null
@@ -56,18 +57,30 @@ class UserService : IUserService.Stub() {
     private var injOk = 0
     private var injFail = 0
 
+    // dedo actual
     private var down = false
     private var downX = 0f
     private var downY = 0f
     private var downT = 0L
+    private var curX = 0f
+    private var curY = 0f
     private var moved = false
     private var cut = false
     private var below = true
-    private var lastTapT = 0L
+    private var secondTap = false
+    private var tapPending = false
+    private var lastUpT = 0L
     private var lastTapX = 0f
     private var lastTapY = 0f
     private var lastCb = 0L
     private val xy = FloatArray(2)
+
+    // diagnóstico
+    private var evCount = 0L
+    private var downs = 0
+    private var taps = 0
+    private var doubles = 0
+    private var lastStatus = 0L
 
     override fun destroy() {
         running = false
@@ -93,17 +106,33 @@ class UserService : IUserService.Stub() {
         try { cb?.onLog(s) } catch (_: Throwable) {}
     }
 
+    private fun report(force: Boolean = false) {
+        val now = SystemClock.uptimeMillis()
+        if (!force && now - lastStatus < 700L) return
+        lastStatus = now
+        val ly = lineY()
+        log(
+            "táctil id=$deviceId $devPath | eventos=$evCount dedos=$downs toques=$taps dobles=$doubles | " +
+                "dedo=(${curX.toInt()},${curY.toInt()}) pantalla=${sw}x$sh giro=$rot " +
+                "línea=${if (ly < 0f) "ninguna" else ly.toInt().toString()} | cortes=$injOk ok/$injFail mal"
+        )
+    }
+
     // ---------- preparación ----------
 
     private fun findDevice(): Boolean {
         var wanted: String? = null
-        for (id in InputDevice.getDeviceIds()) {
-            val d = InputDevice.getDevice(id) ?: continue
-            if ((d.sources and InputDevice.SOURCE_TOUCHSCREEN) == InputDevice.SOURCE_TOUCHSCREEN) {
-                deviceId = id
-                wanted = d.name
-                break
+        try {
+            for (id in InputDevice.getDeviceIds()) {
+                val d = InputDevice.getDevice(id) ?: continue
+                if (d.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)) {
+                    deviceId = id
+                    wanted = d.name
+                    break
+                }
             }
+        } catch (e: Throwable) {
+            log("No pude listar dispositivos: ${e.message}")
         }
         val proc = Runtime.getRuntime().exec(arrayOf("getevent", "-p"))
         val text = proc.inputStream.bufferedReader().readText()
@@ -167,14 +196,20 @@ class UserService : IUserService.Stub() {
     private fun loop() {
         try {
             if (!findDevice()) { log("No encontré la pantalla táctil"); return }
-            val injectReady = initInject()
-            log("Motor listo (${devPath}, inyección: ${if (injectReady) "sí" else "no"})")
+            initInject()
             val is64 = Process.is64Bit()
             val buf = ByteArray(if (is64) 24 else 16)
             val off = if (is64) 16 else 8
             val bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN)
-            val ins = FileInputStream(devPath)
+            val ins = try {
+                FileInputStream(devPath)
+            } catch (e: Throwable) {
+                log("Sin permiso para leer $devPath: ${e.message}")
+                return
+            }
+            report(true)
             var slot = 0
+            var primary = -1 // casilla del dedo que seguimos
             var rx = 0
             var ry = 0
             var dirty = false
@@ -182,21 +217,33 @@ class UserService : IUserService.Stub() {
             var upEvt = false
             while (running) {
                 if (!readFully(ins, buf)) break
+                evCount++
                 val type = bb.getShort(off).toInt() and 0xffff
                 val code = bb.getShort(off + 2).toInt() and 0xffff
                 val value = bb.getInt(off + 4)
                 if (type == EV_ABS) {
                     when (code) {
                         ABS_MT_SLOT -> slot = value
-                        ABS_MT_TRACKING_ID -> if (slot == 0) { if (value >= 0) downEvt = true else upEvt = true }
-                        ABS_MT_POSITION_X -> if (slot == 0) { rx = value; dirty = true }
-                        ABS_MT_POSITION_Y -> if (slot == 0) { ry = value; dirty = true }
+                        ABS_MT_TRACKING_ID -> {
+                            if (value >= 0) {
+                                if (primary < 0 || slot == primary) { primary = slot; downEvt = true }
+                            } else if (slot == primary) {
+                                upEvt = true
+                            }
+                        }
+                        ABS_MT_POSITION_X -> if (slot == primary) { rx = value; dirty = true }
+                        ABS_MT_POSITION_Y -> if (slot == primary) { ry = value; dirty = true }
                     }
                 } else if (type == EV_SYN && code == SYN_REPORT) {
                     if (downEvt) fingerDown(rx, ry)
-                    else if (upEvt) { if (down) fingerUp() }
-                    else if (down && dirty) fingerMove(rx, ry)
+                    if (upEvt) {
+                        if (down) fingerUp()
+                        primary = -1
+                    } else if (down && dirty && !downEvt) {
+                        fingerMove(rx, ry)
+                    }
                     downEvt = false; upEvt = false; dirty = false
+                    report()
                 }
             }
         } catch (e: Throwable) {
@@ -229,9 +276,12 @@ class UserService : IUserService.Stub() {
 
     private fun fingerDown(rx: Int, ry: Int) {
         map(rx, ry)
-        downX = xy[0]; downY = xy[1]
+        downX = xy[0]; downY = xy[1]; curX = downX; curY = downY
         downT = SystemClock.uptimeMillis()
         moved = false; cut = false; down = true
+        downs++
+        secondTap = tapPending && downT - lastUpT <= DOUBLE_GAP &&
+            hypot(downX - lastTapX, downY - lastTapY) <= DOUBLE_SLOP
         val ly = lineY()
         below = ly < 0f || downY >= ly
         if (!enabled) return
@@ -242,6 +292,7 @@ class UserService : IUserService.Stub() {
         map(rx, ry)
         val x = xy[0]
         val y = xy[1]
+        curX = x; curY = y
         if (!enabled) return
         if (!moved && hypot(x - downX, y - downY) > SLOP) moved = true
         val ly = lineY()
@@ -260,16 +311,19 @@ class UserService : IUserService.Stub() {
     private fun fingerUp() {
         down = false
         try { cb?.onTouch(0f, 0f, false) } catch (_: Throwable) {}
-        if (!enabled || cut || moved) return
+        if (!enabled) { tapPending = false; return }
         val now = SystemClock.uptimeMillis()
-        if (now - downT >= LONG_PRESS) return
-        if (lastTapT != 0L && now - lastTapT <= DOUBLE_MS &&
-            hypot(downX - lastTapX, downY - lastTapY) <= DOUBLE_SLOP
-        ) {
-            lastTapT = 0L
+        val shortTap = !cut && !moved && now - downT < LONG_PRESS
+        if (!shortTap) { tapPending = false; return }
+        taps++
+        if (secondTap) {
+            tapPending = false
+            doubles++
             try { cb?.onDoubleTap(downX, downY) } catch (_: Throwable) {}
+            report(true)
         } else {
-            lastTapT = now; lastTapX = downX; lastTapY = downY
+            tapPending = true
+            lastUpT = now; lastTapX = downX; lastTapY = downY
         }
     }
 
@@ -277,7 +331,11 @@ class UserService : IUserService.Stub() {
     private fun injectCancel(x: Float, y: Float) {
         val m = injectM
         val target = im
-        if (m == null || target == null) { log("No puedo cortar: sin inyección"); return }
+        if (m == null || target == null) {
+            injFail++
+            log("No puedo cortar: sin inyección")
+            return
+        }
         try {
             val t = SystemClock.uptimeMillis()
             val ev = MotionEvent.obtain(t, t, MotionEvent.ACTION_CANCEL, x, y, 1f, 1f, 0, 1f, 1f, deviceId, 0)
@@ -289,6 +347,6 @@ class UserService : IUserService.Stub() {
             injFail++
             log("Error al cortar: ${e.cause?.message ?: e.message}")
         }
-        log("Cortes: $injOk ok, $injFail fallidos")
+        report(true)
     }
 }
